@@ -21,6 +21,7 @@ from event_store import EventStoreError, FirestoreEventStore
 FAQ = json.loads(Path(__file__).with_name("faq.json").read_text(encoding="utf-8"))
 MAX_BODY_BYTES = 1_000_000
 MAX_FIELD_LENGTH = 300
+MAX_LABEL_LENGTH = 30
 REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 
 FIELD_COMMANDS = {
@@ -40,7 +41,10 @@ FIELD_LABELS = {
     "contact": "聯絡人",
 }
 SET_COMMAND = re.compile(
-    r"設定\s*(活動名稱|日期|集合時間|集合地點|交通|聯絡人)\s*(?:[:：]\s*)?(.+)",
+    r"設定\s*(?:(?P<label_builtin>活動名稱|日期|集合時間|集合地點|交通|聯絡人)"
+    r"(?:\s*[:：]\s*|\s+)(?P<value_builtin>.+)|"
+    r"(?P<label_colon>[^:：\n]+?)\s*[:：]\s*(?P<value_colon>.+)|"
+    r"(?P<label_space>[^:：\s]+)\s+(?P<value_space>.+))",
     re.DOTALL,
 )
 
@@ -100,7 +104,8 @@ def manager_help() -> str:
         "3. @我 設定日期 2026/10/20\n"
         "4. @我 設定集合時間 09:30\n"
         "5. @我 設定集合地點 公司一樓\n"
-        "也可以設定交通或聯絡人。建立參訪的人會成為這個群組的資料管理者。"
+        "也可以自由新增欄位，例如「@我 設定注意事項：請攜帶訪客證」。\n"
+        "建立參訪的人會成為這個群組的資料管理者。"
     )
 
 
@@ -110,6 +115,9 @@ def format_event(event: dict[str, Any]) -> str:
         value = event.get(field)
         if value:
             lines.append(f"{FIELD_LABELS[field]}：{value}")
+    for label, value in (event.get("customFields") or {}).items():
+        if value:
+            lines.append(f"{label}：{value}")
     if len(lines) == 1:
         lines.append("資料尚未設定。請主辦人輸入「管理說明」。")
     return "\n".join(lines)
@@ -170,13 +178,23 @@ def group_answer(event: dict[str, Any], store) -> str:
     if command:
         if not user_id:
             return "LINE 沒有提供你的使用者識別資訊，暫時無法修改資料。"
-        label, raw_value = command.groups()
+        parts = command.groupdict()
+        label = parts["label_builtin"] or parts["label_colon"] or parts["label_space"]
+        raw_value = (
+            parts["value_builtin"] or parts["value_colon"] or parts["value_space"]
+        )
+        label = label.strip()
         value = raw_value.strip()
+        if len(label) > MAX_LABEL_LENGTH:
+            return f"欄位名稱太長了，請控制在 {MAX_LABEL_LENGTH} 個字以內。"
         if not value:
             return f"請在「設定{label}」後面加上內容。"
         if len(value) > MAX_FIELD_LENGTH:
             return f"{label}太長了，請控制在 {MAX_FIELD_LENGTH} 個字以內。"
-        status = store.update(group_key, user_id, FIELD_COMMANDS[label], value)
+        if label in FIELD_COMMANDS:
+            status = store.update(group_key, user_id, FIELD_COMMANDS[label], value)
+        else:
+            status = store.update_custom(group_key, user_id, label, value)
         if status == "updated":
             return f"已更新{label}：{value}"
         if status == "missing":
@@ -188,6 +206,10 @@ def group_answer(event: dict[str, Any], store) -> str:
         return format_event(event_data) if event_data else (
             "這個群組尚未建立參訪資料。請主辦人輸入「管理說明」。"
         )
+    if event_data:
+        for label, value in (event_data.get("customFields") or {}).items():
+            if normalize(label) in normalized:
+                return f"{label}：{value}"
     if any(keyword in normalized for keyword in ("時間", "日期", "幾點", "何時")):
         return format_schedule(event_data)
     if any(keyword in normalized for keyword in ("地點", "哪裡", "地址", "交通", "集合")):
@@ -201,17 +223,11 @@ def answer_for_event(event: dict[str, Any], store=None) -> str | None:
     source_type = (event.get("source") or {}).get("type")
     text = (event.get("message") or {}).get("text", "")
     normalized = normalize(text)
-    group_only = any(
+    group_only = SET_COMMAND.search(text) is not None or any(
         keyword in normalized
         for keyword in (
             "建立參訪",
             "管理說明",
-            "設定活動名稱",
-            "設定日期",
-            "設定集合時間",
-            "設定集合地點",
-            "設定交通",
-            "設定聯絡人",
             "活動資訊",
             "參訪資訊",
             "全部資訊",

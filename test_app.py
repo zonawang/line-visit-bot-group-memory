@@ -64,6 +64,31 @@ class GroupMemoryTests(unittest.TestCase):
         self.assertIn("只有這個群組的資料管理者", reply)
         self.assertNotIn("eventDate", self.store.get("G-school-a"))
 
+    def test_manager_can_create_and_query_any_field(self):
+        self.ask("@Bot 建立參訪")
+        reply = self.ask("@Bot 設定注意事項：參訪需全程攜帶訪客證")
+        self.assertEqual("已更新注意事項：參訪需全程攜帶訪客證", reply)
+        self.assertEqual(
+            "注意事項：參訪需全程攜帶訪客證",
+            self.ask("@Bot 注意事項"),
+        )
+        self.assertIn("注意事項：參訪需全程攜帶訪客證", self.ask("@Bot 活動資訊"))
+
+        self.assertEqual(
+            "已更新Dress Code：Business Casual",
+            self.ask("@Bot 設定 Dress Code：Business Casual"),
+        )
+        self.assertEqual("Dress Code：Business Casual", self.ask("@Bot Dress Code"))
+
+    def test_non_manager_cannot_change_custom_field(self):
+        self.ask("@Bot 建立參訪")
+        reply = self.ask(
+            "@Bot 設定報到方式：一樓櫃台報到",
+            user_id="U-student",
+        )
+        self.assertIn("只有這個群組的資料管理者", reply)
+        self.assertNotIn("customFields", self.store.get("G-school-a"))
+
     def test_groups_keep_separate_event_data(self):
         self.ask("@Bot 建立參訪", conversation_id="G-school-a")
         self.ask("@Bot 設定集合地點 公司一樓", conversation_id="G-school-a")
@@ -80,9 +105,11 @@ class GroupMemoryTests(unittest.TestCase):
         self.assertIn("尚未建立參訪資料", reply)
 
     def test_direct_message_cannot_modify_group_data(self):
-        event = text_event("user", "設定日期 2026/10/20")
-        reply = answer_for_event(event, self.store)
-        self.assertIn("需要在參訪群組中", reply)
+        for command in ("設定日期 2026/10/20", "設定注意事項：請攜帶訪客證"):
+            with self.subTest(command=command):
+                event = text_event("user", command)
+                reply = answer_for_event(event, self.store)
+                self.assertIn("需要在參訪群組中", reply)
 
     def test_direct_message_redirects_group_specific_queries(self):
         for question in ("幾點集合？", "集合地點在哪裡？", "交通方式是什麼？"):

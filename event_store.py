@@ -49,6 +49,19 @@ class InMemoryEventStore:
             event["updatedAt"] = datetime.now(timezone.utc)
             return "updated"
 
+    def update_custom(
+        self, conversation_id: str, manager_user_id: str, label: str, value: str
+    ) -> str:
+        with self._lock:
+            event = self._events.get(conversation_id)
+            if not event:
+                return "missing"
+            if event["managerUserId"] != manager_user_id:
+                return "forbidden"
+            event.setdefault("customFields", {})[label] = value
+            event["updatedAt"] = datetime.now(timezone.utc)
+            return "updated"
+
 
 class FirestoreEventStore:
     """Firestore implementation using one document per LINE conversation."""
@@ -120,3 +133,34 @@ class FirestoreEventStore:
             return update_in_transaction(transaction)
         except Exception as error:
             raise EventStoreError("Firestore update failed") from error
+
+    def update_custom(
+        self, conversation_id: str, manager_user_id: str, label: str, value: str
+    ) -> str:
+        document = self._collection.document(conversation_id)
+        transaction = self._client.transaction()
+        firestore = self._firestore
+
+        @firestore.transactional
+        def update_in_transaction(current_transaction):
+            snapshot = document.get(transaction=current_transaction)
+            if not snapshot.exists:
+                return "missing"
+            data = snapshot.to_dict() or {}
+            if data.get("managerUserId") != manager_user_id:
+                return "forbidden"
+            custom_fields = data.get("customFields") or {}
+            custom_fields[label] = value
+            current_transaction.update(
+                document,
+                {
+                    "customFields": custom_fields,
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                },
+            )
+            return "updated"
+
+        try:
+            return update_in_transaction(transaction)
+        except Exception as error:
+            raise EventStoreError("Firestore custom field update failed") from error

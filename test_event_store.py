@@ -18,6 +18,26 @@ class InMemoryEventStoreTests(unittest.TestCase):
         self.assertEqual("updated", store.update("G1", "U1", "eventDate", "2026/10/20"))
         self.assertEqual("2026/10/20", store.get("G1")["eventDate"])
 
+    def test_custom_field_update_requires_owner(self):
+        store = InMemoryEventStore()
+        self.assertEqual(
+            "missing",
+            store.update_custom("G1", "U1", "注意事項", "請攜帶訪客證"),
+        )
+        store.create("G1", "U1")
+        self.assertEqual(
+            "forbidden",
+            store.update_custom("G1", "U2", "注意事項", "請攜帶訪客證"),
+        )
+        self.assertEqual(
+            "updated",
+            store.update_custom("G1", "U1", "注意事項", "請攜帶訪客證"),
+        )
+        self.assertEqual(
+            "請攜帶訪客證",
+            store.get("G1")["customFields"]["注意事項"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
