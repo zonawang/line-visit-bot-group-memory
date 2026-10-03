@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from event_store import EventStoreError, FirestoreEventStore
+from semantic_selector import SemanticSelectorError, VertexAISemanticSelector
 
 
 FAQ = json.loads(Path(__file__).with_name("faq.json").read_text(encoding="utf-8"))
@@ -73,6 +74,8 @@ SET_COMMAND = re.compile(
 )
 
 _event_store = None
+_semantic_selector = None
+_semantic_selector_initialized = False
 
 
 def get_event_store():
@@ -81,6 +84,30 @@ def get_event_store():
         collection = os.environ.get("VISIT_GROUP_COLLECTION", "visit_group_events")
         _event_store = FirestoreEventStore(collection)
     return _event_store
+
+
+def get_semantic_selector():
+    global _semantic_selector, _semantic_selector_initialized
+    enabled = os.environ.get("ENABLE_GENAI", "false").lower() in {"1", "true", "yes"}
+    if not enabled:
+        return None
+    if not _semantic_selector_initialized:
+        _semantic_selector_initialized = True
+        try:
+            _semantic_selector = VertexAISemanticSelector()
+        except SemanticSelectorError as error:
+            print(
+                json.dumps(
+                    {
+                        "severity": "WARNING",
+                        "message": "semantic selector initialization failed",
+                        "errorType": type(error).__name__,
+                    }
+                ),
+                flush=True,
+            )
+            _semantic_selector = None
+    return _semantic_selector
 
 
 def normalize(text: str) -> str:
@@ -153,6 +180,59 @@ def custom_field_answer(question: str, event: dict[str, Any]) -> str | None:
             "如果還想確認其他細節，也可以繼續問我。"
         )
     return None
+
+
+def field_values(event: dict[str, Any]) -> dict[str, str]:
+    """Return the saved facts that Gemini is allowed to choose from."""
+    values = {
+        label: str(event[field])
+        for field, label in FIELD_LABELS.items()
+        if event.get(field)
+    }
+    values.update(
+        {
+            str(label): str(value)
+            for label, value in (event.get("customFields") or {}).items()
+            if label and value
+        }
+    )
+    return values
+
+
+def semantic_field_answer(question: str, event: dict[str, Any], selector) -> str | None:
+    """Use Gemini only to choose a label, then return the exact Firestore value."""
+    if selector is None:
+        return None
+    values = field_values(event)
+    if not values:
+        return None
+    try:
+        selected_label = selector.select_label(question, list(values))
+    except SemanticSelectorError as error:
+        print(
+            json.dumps(
+                {
+                    "severity": "WARNING",
+                    "message": "semantic field selection failed",
+                    "errorType": type(error).__name__,
+                }
+            ),
+            flush=True,
+        )
+        return None
+    if not selected_label or selected_label not in values:
+        return None
+    print(
+        json.dumps(
+            {"severity": "INFO", "message": "semantic field selection succeeded"}
+        ),
+        flush=True,
+    )
+    return (
+        "沒問題，我從這個群組保存的參訪資料中找到：\n"
+        f"{selected_label}：{values[selected_label]}\n"
+        "如果還想確認其他細節，也可以繼續問我。"
+    )
 
 
 def static_answer(question: str) -> str:
@@ -274,7 +354,7 @@ def format_location(event: dict[str, Any] | None) -> str:
     )
 
 
-def group_answer(event: dict[str, Any], store) -> str:
+def group_answer(event: dict[str, Any], store, semantic_selector=None) -> str:
     source = event.get("source") or {}
     group_key = conversation_id(source)
     user_id = source.get("userId")
@@ -358,6 +438,13 @@ def group_answer(event: dict[str, Any], store) -> str:
         custom_answer = custom_field_answer(text, event_data)
         if custom_answer:
             return custom_answer
+        ai_answer = semantic_field_answer(
+            text,
+            event_data,
+            semantic_selector if semantic_selector is not None else get_semantic_selector(),
+        )
+        if ai_answer:
+            return ai_answer
     if any(keyword in normalized for keyword in ("時間", "日期", "幾點", "何時")):
         return format_schedule(event_data)
     if any(keyword in normalized for keyword in ("地點", "哪裡", "地址", "交通", "集合")):
@@ -365,7 +452,7 @@ def group_answer(event: dict[str, Any], store) -> str:
     return static_answer(text)
 
 
-def answer_for_event(event: dict[str, Any], store=None) -> str | None:
+def answer_for_event(event: dict[str, Any], store=None, semantic_selector=None) -> str | None:
     if not is_for_bot(event):
         return None
     source_type = (event.get("source") or {}).get("type")
@@ -396,7 +483,11 @@ def answer_for_event(event: dict[str, Any], store=None) -> str | None:
             )
         return static_answer(text)
     try:
-        return group_answer(event, store or get_event_store())
+        return group_answer(
+            event,
+            store or get_event_store(),
+            semantic_selector=semantic_selector,
+        )
     except EventStoreError:
         return (
             "不好意思，參訪資料庫目前暫時無法連線，請稍後再試。"

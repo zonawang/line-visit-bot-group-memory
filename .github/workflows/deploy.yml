@@ -37,7 +37,8 @@ jobs:
             --image "${IMAGE}:${GITHUB_SHA}" \
             --region "${REGION}" \
             --project "${PROJECT_ID}" \
-            --update-env-vars "VISIT_GROUP_COLLECTION=visit_group_events" \
+            --update-env-vars "VISIT_GROUP_COLLECTION=visit_group_events,ENABLE_GENAI=true,GOOGLE_CLOUD_PROJECT=line-zona,VERTEX_AI_LOCATION=global,GENAI_MODEL=gemini-2.5-flash" \
+            --timeout "15s" \
             --quiet
           SERVICE_URL="$(gcloud run services describe "${SERVICE}" \
             --region "${REGION}" \

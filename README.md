@@ -7,6 +7,7 @@
 - 使用 LINE `groupId` 或 `roomId` 區分不同參訪群組。
 - 將活動名稱、日期、集合時間、集合地點、交通與聯絡人保存到 Firestore。
 - 主辦人也能自由建立「注意事項」、「報到方式」等任意欄位。
+- 規則無法判斷問題時，由 Vertex AI Gemini 從已保存的欄位中選出最相關的一項。
 - 第一位輸入「建立參訪」的成員成為該群組的資料管理者。
 - 只有資料管理者可以修改資訊，其他成員都能查詢。
 - 資料尚未設定時明確告知，不自行猜測時間或地點。
@@ -39,6 +40,8 @@
 ```
 
 自訂欄位查詢支援自然問法。例如設定「遊覽車停車地點」後，詢問「遊覽車可以停哪裡」會讀取同一筆資料。
+
+查詢會先使用本機文字規則；規則找不到時才呼叫 Gemini。Gemini 只能回傳已存在的欄位名稱，最後的答案仍由程式直接讀取 Firestore 原始值，因此不會讓模型自行編造參訪資訊。Gemini 沒有找到適合欄位或暫時無法使用時，Bot 會請使用者稍等 Zona 協助確認。
 
 在群組輸入 `@Bot 管理說明` 可以再次查看設定指令。
 
@@ -76,6 +79,10 @@ python -m unittest discover -p 'test_*.py'
 LINE_CHANNEL_SECRET
 LINE_CHANNEL_ACCESS_TOKEN
 VISIT_GROUP_COLLECTION（選填）
+ENABLE_GENAI（部署環境設為 true）
+GOOGLE_CLOUD_PROJECT
+VERTEX_AI_LOCATION（預設 global）
+GENAI_MODEL（預設 gemini-2.5-flash）
 ```
 
 啟動：
@@ -94,4 +101,5 @@ python app.py
 - 不在程式碼或 GitHub 儲存 LINE token、Channel secret 或服務帳號金鑰。
 - 群組必須先建立參訪資料，才能寫入場次資訊。
 - 只有建立該場資料的 LINE 使用者能修改。
+- Gemini 只負責選擇欄位，不生成活動日期、地點或其他事實；程式也會拒絕不存在的欄位名稱。
 - 目前沒有提供聊天指令更換管理者，避免群組成員自行接管；需要更換時應由維運者確認後處理。

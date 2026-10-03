@@ -5,6 +5,7 @@ import unittest
 
 from app import answer_for_event, valid_signature
 from event_store import InMemoryEventStore
+from semantic_selector import SemanticSelectorError
 
 
 def text_event(
@@ -30,8 +31,12 @@ class GroupMemoryTests(unittest.TestCase):
     def setUp(self):
         self.store = InMemoryEventStore()
 
-    def ask(self, text, **kwargs):
-        return answer_for_event(text_event("group", text, **kwargs), self.store)
+    def ask(self, text, *, semantic_selector=None, **kwargs):
+        return answer_for_event(
+            text_event("group", text, **kwargs),
+            self.store,
+            semantic_selector=semantic_selector,
+        )
 
     def test_signed_body(self):
         body = b'{"events":[]}'
@@ -143,6 +148,42 @@ class GroupMemoryTests(unittest.TestCase):
     def test_unknown_question_politely_waits_for_zona(self):
         reply = self.ask("@Bot 公司附近有便利商店嗎？")
         self.assertIn("不好意思", reply)
+        self.assertIn("稍等 Zona 協助確認", reply)
+
+    def test_gemini_can_route_a_semantic_question_to_saved_data(self):
+        class LunchSelector:
+            def select_label(self, question, labels):
+                self.question = question
+                self.labels = labels
+                return "午餐"
+
+        self.ask("@Bot 建立參訪")
+        self.ask("@Bot 設定午餐：提供餐盒")
+        selector = LunchSelector()
+        reply = self.ask("@Bot 中午吃什麼？", semantic_selector=selector)
+        self.assertIn("午餐：提供餐盒", reply)
+        self.assertIn("這個群組保存的參訪資料", reply)
+        self.assertIn("午餐", selector.labels)
+
+    def test_gemini_cannot_return_a_field_that_was_not_saved(self):
+        class InvalidSelector:
+            def select_label(self, question, labels):
+                return "不存在的欄位"
+
+        self.ask("@Bot 建立參訪")
+        self.ask("@Bot 設定午餐：提供餐盒")
+        reply = self.ask("@Bot 有提供晚餐嗎？", semantic_selector=InvalidSelector())
+        self.assertIn("稍等 Zona 協助確認", reply)
+        self.assertNotIn("提供餐盒", reply)
+
+    def test_gemini_failure_falls_back_to_zona(self):
+        class FailingSelector:
+            def select_label(self, question, labels):
+                raise SemanticSelectorError("temporary failure")
+
+        self.ask("@Bot 建立參訪")
+        self.ask("@Bot 設定午餐：提供餐盒")
+        reply = self.ask("@Bot 有提供晚餐嗎？", semantic_selector=FailingSelector())
         self.assertIn("稍等 Zona 協助確認", reply)
 
     def test_non_text_is_ignored(self):

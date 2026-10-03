@@ -138,7 +138,31 @@ if len(common) >= 2 or (shared_characters >= 3 and coverage >= 0.5):
 
 現在「遊覽車停車地點」可以對應到「遊覽車可以停哪裡」，「報到方式」也能對應到「要怎麼報到」。同時，我也加了避免誤判的條件；單純問「集合地點在哪裡」時，不會因為兩個欄位都有「地點」就回覆遊覽車停車位置。
 
-這段功能沒有使用生成式 AI，而是先用可預期的文字規則處理。參訪資訊和集合地點都需要很明確，我希望自己能理解 Bot 為什麼選擇這個答案，也方便針對實際問法繼續調整。
+文字規則可以處理「遊覽車停車地點」和「遊覽車可以停哪裡」這種有共同關鍵詞的問法，但如果設定的欄位叫「午餐」，有人問「中午吃什麼？」，兩邊只有一個字相同，規則就很難可靠判斷。
+
+所以我再接上 Vertex AI Gemini。Bot 會先執行原本的文字規則；規則找不到答案時，才把使用者問題和這個群組現有的欄位名稱交給 Gemini，請它選出最相關的一個。
+
+```python
+selected_label = selector.select_label(
+    question,
+    list(saved_field_values),
+)
+
+if selected_label in saved_field_values:
+    value = saved_field_values[selected_label]
+```
+
+這裡我沒有讓 Gemini 直接生成參訪答案。模型只能從 Firestore 已存在的欄位名稱中選一個，也可以回傳「沒有適合欄位」。程式收到結果後，還會再確認這個欄位真的存在，最後直接取出 Firestore 裡的原始內容。
+
+例如群組已經保存：
+
+```text
+午餐：提供餐盒
+```
+
+有人問「中午吃什麼？」，Gemini 可以選擇「午餐」，Bot 再回覆資料庫裡的「提供餐盒」。Gemini 不會自己決定餐點，也不能臨時生成一個不存在的時間或地點。
+
+如果 Vertex AI 暫時無法使用，程式會回到原本的規則；兩邊都找不到答案時，Bot 就有禮貌地請大家稍等 Zona 協助確認。這樣可以讓問法更有彈性，同時保留參訪資訊需要的可控性。
 
 ## 回答正確之外，說話方式也很重要
 
@@ -183,7 +207,7 @@ LINE 群組訊息
 
 程式仍然跑在 Google Cloud Run。LINE 的 Channel secret 和 access token 放在 Secret Manager，沒有寫進 GitHub。每次推送到 `main`，GitHub Actions 會建立新的容器並自動部署到 Cloud Run。
 
-這次也替 Cloud Run 的服務帳號加入 Firestore 所需的讀寫權限。Bot 只使用自己的服務帳號存取資料，不需要在程式碼中放 Google Cloud 金鑰。
+這次也替 Cloud Run 的服務帳號加入 Firestore 讀寫與 Vertex AI 使用權限。Bot 使用自己的服務帳號存取這兩項服務，不需要在程式碼中放 Google Cloud 金鑰。
 
 ## 可以怎麼測試？
 
