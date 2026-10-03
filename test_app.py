@@ -80,6 +80,20 @@ class GroupMemoryTests(unittest.TestCase):
         )
         self.assertEqual("Dress Code：Business Casual", self.ask("@Bot Dress Code"))
 
+    def test_natural_question_matches_custom_field(self):
+        self.ask("@Bot 建立參訪")
+        self.ask("@Bot 設定遊覽車停車地點：大港墘公園")
+        self.assertEqual(
+            "遊覽車停車地點：大港墘公園",
+            self.ask("@Bot 遊覽車可以停哪裡"),
+        )
+
+    def test_generic_location_question_does_not_select_unrelated_custom_field(self):
+        self.ask("@Bot 建立參訪")
+        self.ask("@Bot 設定遊覽車停車地點：大港墘公園")
+        reply = self.ask("@Bot 集合地點在哪裡")
+        self.assertIn("集合地點與交通資訊尚未設定", reply)
+
     def test_non_manager_cannot_change_custom_field(self):
         self.ask("@Bot 建立參訪")
         reply = self.ask(

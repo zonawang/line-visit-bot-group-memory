@@ -23,6 +23,30 @@ MAX_BODY_BYTES = 1_000_000
 MAX_FIELD_LENGTH = 300
 MAX_LABEL_LENGTH = 30
 REPLY_URL = "https://api.line.me/v2/bot/message/reply"
+GENERIC_FIELD_WORDS = {
+    "地點",
+    "位置",
+    "時間",
+    "日期",
+    "方式",
+    "資訊",
+    "資料",
+    "內容",
+    "事項",
+    "說明",
+}
+QUESTION_FILLERS = (
+    "可以",
+    "可不可以",
+    "能不能",
+    "請問",
+    "哪裡",
+    "哪邊",
+    "什麼",
+    "怎麼",
+    "如何",
+    "是否",
+)
 
 FIELD_COMMANDS = {
     "活動名稱": "eventName",
@@ -63,6 +87,68 @@ def normalize(text: str) -> str:
     return "".join(
         char for char in unicodedata.normalize("NFKC", text).lower() if not char.isspace()
     )
+
+
+def match_text(text: str) -> str:
+    """Keep searchable letters and numbers while dropping mentions and punctuation."""
+    return "".join(char for char in normalize(text) if char.isalnum())
+
+
+def longest_common_text(left: str, right: str) -> str:
+    """Return the longest contiguous fragment shared by two short strings."""
+    if not left or not right:
+        return ""
+    previous = [0] * (len(right) + 1)
+    best_length = 0
+    best_end = 0
+    for left_index, left_char in enumerate(left, start=1):
+        current = [0] * (len(right) + 1)
+        for right_index, right_char in enumerate(right, start=1):
+            if left_char == right_char:
+                current[right_index] = previous[right_index - 1] + 1
+                if current[right_index] > best_length:
+                    best_length = current[right_index]
+                    best_end = left_index
+        previous = current
+    return left[best_end - best_length : best_end]
+
+
+def custom_field_answer(question: str, event: dict[str, Any]) -> str | None:
+    """Find the custom field whose label best matches a natural-language question."""
+    fields = event.get("customFields") or {}
+    question_text = match_text(question)
+    question_core = question_text
+    for filler in QUESTION_FILLERS:
+        question_core = question_core.replace(match_text(filler), "")
+
+    best_match = None
+    best_score = None
+    for label, value in fields.items():
+        label_text = match_text(label)
+        if not label_text or not value:
+            continue
+        if label_text in question_text:
+            score = (2, len(label_text), 1.0, len(set(label_text)))
+        else:
+            label_core = label_text
+            for generic_word in GENERIC_FIELD_WORDS:
+                if label_core.endswith(generic_word) and len(label_core) > len(generic_word):
+                    label_core = label_core[: -len(generic_word)]
+                    break
+            common = longest_common_text(label_core, question_core)
+            meaningful_common = len(common) >= 2 and common not in GENERIC_FIELD_WORDS
+            shared_characters = len(set(label_core) & set(question_core))
+            coverage = shared_characters / max(1, len(set(label_core)))
+            if not meaningful_common and not (shared_characters >= 3 and coverage >= 0.5):
+                continue
+            score = (1 if meaningful_common else 0, len(common), coverage, shared_characters)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_match = (label, value)
+
+    if best_match:
+        return f"{best_match[0]}：{best_match[1]}"
+    return None
 
 
 def static_answer(question: str) -> str:
@@ -207,9 +293,9 @@ def group_answer(event: dict[str, Any], store) -> str:
             "這個群組尚未建立參訪資料。請主辦人輸入「管理說明」。"
         )
     if event_data:
-        for label, value in (event_data.get("customFields") or {}).items():
-            if normalize(label) in normalized:
-                return f"{label}：{value}"
+        custom_answer = custom_field_answer(text, event_data)
+        if custom_answer:
+            return custom_answer
     if any(keyword in normalized for keyword in ("時間", "日期", "幾點", "何時")):
         return format_schedule(event_data)
     if any(keyword in normalized for keyword in ("地點", "哪裡", "地址", "交通", "集合")):
