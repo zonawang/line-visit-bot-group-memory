@@ -1,0 +1,105 @@
+import base64
+import hashlib
+import hmac
+import unittest
+
+from app import answer_for_event, valid_signature
+from event_store import InMemoryEventStore
+
+
+def text_event(
+    source_type,
+    text,
+    *,
+    user_id="U-manager",
+    conversation_id="G-school-a",
+    mentioned=True,
+):
+    source = {"type": source_type, "userId": user_id}
+    if source_type == "group":
+        source["groupId"] = conversation_id
+    elif source_type == "room":
+        source["roomId"] = conversation_id
+    message = {"type": "text", "text": text}
+    if source_type in {"group", "room"} and mentioned:
+        message["mention"] = {"mentionees": [{"type": "user", "isSelf": True}]}
+    return {"type": "message", "source": source, "message": message}
+
+
+class GroupMemoryTests(unittest.TestCase):
+    def setUp(self):
+        self.store = InMemoryEventStore()
+
+    def ask(self, text, **kwargs):
+        return answer_for_event(text_event("group", text, **kwargs), self.store)
+
+    def test_signed_body(self):
+        body = b'{"events":[]}'
+        signature = base64.b64encode(
+            hmac.new(b"secret", body, hashlib.sha256).digest()
+        ).decode()
+        self.assertTrue(valid_signature(body, signature, "secret"))
+        self.assertFalse(valid_signature(body + b" ", signature, "secret"))
+
+    def test_group_ignores_messages_without_self_mention(self):
+        event = text_event("group", "活動資訊", mentioned=False)
+        self.assertIsNone(answer_for_event(event, self.store))
+
+    def test_creator_becomes_manager_and_can_update(self):
+        self.assertIn("你是目前的資料管理者", self.ask("@Bot 建立參訪"))
+        self.assertEqual(
+            "已更新活動名稱：XX 大學企業參訪",
+            self.ask("@Bot 設定活動名稱 XX 大學企業參訪"),
+        )
+        self.assertEqual("已更新日期：2026/10/20", self.ask("@Bot 設定日期 2026/10/20"))
+        self.assertEqual("已更新集合時間：09:30", self.ask("@Bot 設定集合時間 09:30"))
+        reply = self.ask("@Bot 活動資訊")
+        self.assertIn("活動名稱：XX 大學企業參訪", reply)
+        self.assertIn("日期：2026/10/20", reply)
+        self.assertIn("集合時間：09:30", reply)
+
+    def test_non_manager_cannot_change_event(self):
+        self.ask("@Bot 建立參訪")
+        reply = self.ask("@Bot 設定日期 2026/12/01", user_id="U-student")
+        self.assertIn("只有這個群組的資料管理者", reply)
+        self.assertNotIn("eventDate", self.store.get("G-school-a"))
+
+    def test_groups_keep_separate_event_data(self):
+        self.ask("@Bot 建立參訪", conversation_id="G-school-a")
+        self.ask("@Bot 設定集合地點 公司一樓", conversation_id="G-school-a")
+        self.ask("@Bot 建立參訪", conversation_id="G-school-b")
+        self.ask("@Bot 設定集合地點 捷運站二號出口", conversation_id="G-school-b")
+        self.assertIn("公司一樓", self.ask("@Bot 集合地點", conversation_id="G-school-a"))
+        self.assertIn(
+            "捷運站二號出口",
+            self.ask("@Bot 集合地點", conversation_id="G-school-b"),
+        )
+
+    def test_unknown_group_does_not_invent_activity_data(self):
+        reply = self.ask("@Bot 幾點集合？", conversation_id="G-new")
+        self.assertIn("尚未建立參訪資料", reply)
+
+    def test_direct_message_cannot_modify_group_data(self):
+        event = text_event("user", "設定日期 2026/10/20")
+        reply = answer_for_event(event, self.store)
+        self.assertIn("需要在參訪群組中", reply)
+
+    def test_direct_message_redirects_group_specific_queries(self):
+        for question in ("幾點集合？", "集合地點在哪裡？", "交通方式是什麼？"):
+            with self.subTest(question=question):
+                event = text_event("user", question)
+                reply = answer_for_event(event, self.store)
+                self.assertIn("需要在參訪群組中", reply)
+
+    def test_direct_message_can_ask_general_question(self):
+        event = text_event("user", "參訪要準備什麼？")
+        self.assertIn("出發前請確認", answer_for_event(event, self.store))
+
+    def test_non_text_is_ignored(self):
+        event = text_event("user", "功能")
+        event["message"]["type"] = "image"
+        self.assertIsNone(answer_for_event(event, self.store))
+
+
+if __name__ == "__main__":
+    unittest.main()
