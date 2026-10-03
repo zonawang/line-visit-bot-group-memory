@@ -47,12 +47,12 @@ class GroupMemoryTests(unittest.TestCase):
 
     def test_creator_becomes_manager_and_can_update(self):
         self.assertIn("你是目前的資料管理者", self.ask("@Bot 建立參訪"))
-        self.assertEqual(
-            "已更新活動名稱：XX 大學企業參訪",
+        self.assertIn(
+            "活動名稱：XX 大學企業參訪",
             self.ask("@Bot 設定活動名稱 XX 大學企業參訪"),
         )
-        self.assertEqual("已更新日期：2026/10/20", self.ask("@Bot 設定日期 2026/10/20"))
-        self.assertEqual("已更新集合時間：09:30", self.ask("@Bot 設定集合時間 09:30"))
+        self.assertIn("日期：2026/10/20", self.ask("@Bot 設定日期 2026/10/20"))
+        self.assertIn("集合時間：09:30", self.ask("@Bot 設定集合時間 09:30"))
         reply = self.ask("@Bot 活動資訊")
         self.assertIn("活動名稱：XX 大學企業參訪", reply)
         self.assertIn("日期：2026/10/20", reply)
@@ -67,23 +67,23 @@ class GroupMemoryTests(unittest.TestCase):
     def test_manager_can_create_and_query_any_field(self):
         self.ask("@Bot 建立參訪")
         reply = self.ask("@Bot 設定注意事項：參訪需全程攜帶訪客證")
-        self.assertEqual("已更新注意事項：參訪需全程攜帶訪客證", reply)
-        self.assertEqual(
+        self.assertIn("注意事項：參訪需全程攜帶訪客證", reply)
+        self.assertIn(
             "注意事項：參訪需全程攜帶訪客證",
             self.ask("@Bot 注意事項"),
         )
         self.assertIn("注意事項：參訪需全程攜帶訪客證", self.ask("@Bot 活動資訊"))
 
-        self.assertEqual(
-            "已更新Dress Code：Business Casual",
+        self.assertIn(
+            "Dress Code：Business Casual",
             self.ask("@Bot 設定 Dress Code：Business Casual"),
         )
-        self.assertEqual("Dress Code：Business Casual", self.ask("@Bot Dress Code"))
+        self.assertIn("Dress Code：Business Casual", self.ask("@Bot Dress Code"))
 
     def test_natural_question_matches_custom_field(self):
         self.ask("@Bot 建立參訪")
         self.ask("@Bot 設定遊覽車停車地點：大港墘公園")
-        self.assertEqual(
+        self.assertIn(
             "遊覽車停車地點：大港墘公園",
             self.ask("@Bot 遊覽車可以停哪裡"),
         )
@@ -92,7 +92,8 @@ class GroupMemoryTests(unittest.TestCase):
         self.ask("@Bot 建立參訪")
         self.ask("@Bot 設定遊覽車停車地點：大港墘公園")
         reply = self.ask("@Bot 集合地點在哪裡")
-        self.assertIn("集合地點與交通資訊尚未設定", reply)
+        self.assertIn("還查不到這場參訪的集合地點與交通資訊", reply)
+        self.assertIn("Zona", reply)
 
     def test_non_manager_cannot_change_custom_field(self):
         self.ask("@Bot 建立參訪")
@@ -116,7 +117,8 @@ class GroupMemoryTests(unittest.TestCase):
 
     def test_unknown_group_does_not_invent_activity_data(self):
         reply = self.ask("@Bot 幾點集合？", conversation_id="G-new")
-        self.assertIn("尚未建立參訪資料", reply)
+        self.assertIn("目前還沒有參訪資料", reply)
+        self.assertIn("Zona", reply)
 
     def test_direct_message_cannot_modify_group_data(self):
         for command in ("設定日期 2026/10/20", "設定注意事項：請攜帶訪客證"):
@@ -134,7 +136,14 @@ class GroupMemoryTests(unittest.TestCase):
 
     def test_direct_message_can_ask_general_question(self):
         event = text_event("user", "參訪要準備什麼？")
-        self.assertIn("出發前請確認", answer_for_event(event, self.store))
+        reply = answer_for_event(event, self.store)
+        self.assertIn("出發前建議先確認", reply)
+        self.assertIn("Zona", reply)
+
+    def test_unknown_question_politely_waits_for_zona(self):
+        reply = self.ask("@Bot 公司附近有便利商店嗎？")
+        self.assertIn("不好意思", reply)
+        self.assertIn("稍等 Zona 協助確認", reply)
 
     def test_non_text_is_ignored(self):
         event = text_event("user", "功能")

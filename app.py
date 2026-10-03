@@ -147,7 +147,11 @@ def custom_field_answer(question: str, event: dict[str, Any]) -> str | None:
             best_match = (label, value)
 
     if best_match:
-        return f"{best_match[0]}：{best_match[1]}"
+        return (
+            "沒問題，我查到的資訊如下：\n"
+            f"{best_match[0]}：{best_match[1]}\n"
+            "如果還想確認其他細節，也可以繼續問我。"
+        )
     return None
 
 
@@ -184,19 +188,19 @@ def conversation_id(source: dict[str, Any]) -> str | None:
 
 def manager_help() -> str:
     return (
-        "主辦人設定方式：\n"
+        "好的，以下是參訪資料的設定方式：\n"
         "1. @我 建立參訪\n"
         "2. @我 設定活動名稱 LINE 企業參訪\n"
         "3. @我 設定日期 2026/10/20\n"
         "4. @我 設定集合時間 09:30\n"
         "5. @我 設定集合地點 公司一樓\n"
         "也可以自由新增欄位，例如「@我 設定注意事項：請攜帶訪客證」。\n"
-        "建立參訪的人會成為這個群組的資料管理者。"
+        "建立參訪的人會成為這個群組的資料管理者。完成設定後，群組成員就可以直接向我查詢。"
     )
 
 
 def format_event(event: dict[str, Any]) -> str:
-    lines = ["這個群組的參訪資訊："]
+    lines = ["沒問題，以下是這個群組目前的參訪資訊："]
     for field in FIELD_LABELS:
         value = event.get(field)
         if value:
@@ -205,36 +209,69 @@ def format_event(event: dict[str, Any]) -> str:
         if value:
             lines.append(f"{label}：{value}")
     if len(lines) == 1:
-        lines.append("資料尚未設定。請主辦人輸入「管理說明」。")
+        lines.append("目前還沒有已設定的內容，可以稍等 Zona 協助補充。")
+    else:
+        lines.append("若現場安排有調整，請以 Zona 的最新公告為準。")
     return "\n".join(lines)
 
 
 def format_schedule(event: dict[str, Any] | None) -> str:
     if not event:
-        return "這個群組尚未建立參訪資料。請主辦人輸入「管理說明」。"
+        return (
+            "不好意思，這個群組目前還沒有參訪資料。"
+            "可以先稍等 Zona 協助確認，或請主辦人輸入「管理說明」開始設定。"
+        )
     date = event.get("eventDate")
     time = event.get("meetingTime")
     if date and time:
-        return f"這場參訪的日期是 {date}，集合時間是 {time}。"
+        return (
+            f"可以的，目前查到這場參訪的日期是 {date}，集合時間是 {time}。"
+            "若時間有臨時調整，請以 Zona 的最新公告為準。"
+        )
     if date:
-        return f"這場參訪的日期是 {date}；集合時間尚未設定。"
+        return (
+            f"目前查到這場參訪的日期是 {date}，但集合時間還沒有設定。"
+            "集合時間可以稍等 Zona 協助補充。"
+        )
     if time:
-        return f"這場參訪的集合時間是 {time}；日期尚未設定。"
-    return "這場參訪的日期與集合時間尚未設定，請以主辦人最新公告為準。"
+        return (
+            f"目前查到這場參訪的集合時間是 {time}，但日期還沒有設定。"
+            "日期可以稍等 Zona 協助補充。"
+        )
+    return (
+        "不好意思，目前還查不到這場參訪的日期與集合時間。"
+        "可以先稍等 Zona 協助確認，有最新資訊時請以 Zona 的公告為準。"
+    )
 
 
 def format_location(event: dict[str, Any] | None) -> str:
     if not event:
-        return "這個群組尚未建立參訪資料。請主辦人輸入「管理說明」。"
+        return (
+            "不好意思，這個群組目前還沒有參訪資料。"
+            "可以先稍等 Zona 協助確認，或請主辦人輸入「管理說明」開始設定。"
+        )
     place = event.get("meetingPlace")
     transportation = event.get("transportation")
     if place and transportation:
-        return f"集合地點：{place}\n交通方式：{transportation}"
+        return (
+            "沒問題，我查到的資訊如下：\n"
+            f"集合地點：{place}\n交通方式：{transportation}\n"
+            "若現場安排有調整，請以 Zona 的最新公告為準。"
+        )
     if place:
-        return f"集合地點：{place}\n交通方式尚未設定。"
+        return (
+            f"目前查到的集合地點是「{place}」，但交通方式還沒有設定。"
+            "交通資訊可以稍等 Zona 協助補充。"
+        )
     if transportation:
-        return f"集合地點尚未設定。\n交通方式：{transportation}"
-    return "這場參訪的集合地點與交通資訊尚未設定，請以主辦人最新公告為準。"
+        return (
+            f"目前查到的交通方式是「{transportation}」，但集合地點還沒有設定。"
+            "集合地點可以稍等 Zona 協助補充。"
+        )
+    return (
+        "不好意思，目前還查不到這場參訪的集合地點與交通資訊。"
+        "可以先稍等 Zona 協助確認，有最新資訊時請以 Zona 的公告為準。"
+    )
 
 
 def group_answer(event: dict[str, Any], store) -> str:
@@ -245,25 +282,43 @@ def group_answer(event: dict[str, Any], store) -> str:
     normalized = normalize(text)
 
     if not group_key:
-        return "我找不到這個群組的識別資訊，暫時無法讀寫參訪資料。"
+        return (
+            "不好意思，我目前無法辨識這個群組，因此暫時不能讀寫參訪資料。"
+            "可以稍等 Zona 協助確認。"
+        )
 
     if "管理說明" in normalized or "設定說明" in normalized:
         return manager_help()
 
     if "建立參訪" in normalized:
         if not user_id:
-            return "LINE 沒有提供你的使用者識別資訊，暫時無法把你設為管理者。"
+            return (
+                "不好意思，LINE 目前沒有提供你的使用者識別資訊，因此暫時無法將你設為管理者。"
+                "可以稍等 Zona 協助確認。"
+            )
         status = store.create(group_key, user_id)
         if status == "created":
-            return "已建立這個群組的參訪資料，你是目前的資料管理者。\n接著可輸入「@我 管理說明」查看設定方式。"
+            return (
+                "好的，已經幫你建立這個群組的參訪資料，你是目前的資料管理者。\n"
+                "接著可以輸入「@我 管理說明」查看設定方式。"
+            )
         if status == "owned":
-            return "這個群組已建立參訪資料，而且你是管理者。輸入「管理說明」可查看設定方式。"
-        return "這個群組已經有資料管理者。如需更換管理者，請由主辦團隊確認後處理。"
+            return (
+                "這個群組已經建立參訪資料，而且你目前是資料管理者。"
+                "需要查看設定方式時，可以輸入「管理說明」。"
+            )
+        return (
+            "不好意思，這個群組已經有資料管理者。"
+            "如果需要更換管理者，請稍等 Zona 協助確認。"
+        )
 
     command = SET_COMMAND.search(text)
     if command:
         if not user_id:
-            return "LINE 沒有提供你的使用者識別資訊，暫時無法修改資料。"
+            return (
+                "不好意思，LINE 目前沒有提供你的使用者識別資訊，因此暫時無法修改資料。"
+                "可以稍等 Zona 協助確認。"
+            )
         parts = command.groupdict()
         label = parts["label_builtin"] or parts["label_colon"] or parts["label_space"]
         raw_value = (
@@ -272,25 +327,32 @@ def group_answer(event: dict[str, Any], store) -> str:
         label = label.strip()
         value = raw_value.strip()
         if len(label) > MAX_LABEL_LENGTH:
-            return f"欄位名稱太長了，請控制在 {MAX_LABEL_LENGTH} 個字以內。"
+            return f"不好意思，欄位名稱有點長，請控制在 {MAX_LABEL_LENGTH} 個字以內再試一次。"
         if not value:
-            return f"請在「設定{label}」後面加上內容。"
+            return f"請在「設定{label}」後面加上內容，我才能幫你保存這筆資訊。"
         if len(value) > MAX_FIELD_LENGTH:
-            return f"{label}太長了，請控制在 {MAX_FIELD_LENGTH} 個字以內。"
+            return f"不好意思，{label}的內容有點長，請控制在 {MAX_FIELD_LENGTH} 個字以內再試一次。"
         if label in FIELD_COMMANDS:
             status = store.update(group_key, user_id, FIELD_COMMANDS[label], value)
         else:
             status = store.update_custom(group_key, user_id, label, value)
         if status == "updated":
-            return f"已更新{label}：{value}"
+            return f"好的，已經幫你更新完成：\n{label}：{value}\n群組成員現在可以直接向我查詢這筆資訊。"
         if status == "missing":
-            return "這個群組還沒建立參訪資料。請先輸入「@我 建立參訪」。"
-        return "只有這個群組的資料管理者可以修改參訪資訊。"
+            return (
+                "不好意思，這個群組目前還沒有參訪資料。"
+                "請先輸入「@我 建立參訪」，再進行設定。"
+            )
+        return (
+            "不好意思，只有這個群組的資料管理者可以修改參訪資訊。"
+            "如果內容需要調整，可以請資料管理者協助，或稍等 Zona 確認。"
+        )
 
     event_data = store.get(group_key)
     if any(keyword in normalized for keyword in ("活動資訊", "參訪資訊", "全部資訊")):
         return format_event(event_data) if event_data else (
-            "這個群組尚未建立參訪資料。請主辦人輸入「管理說明」。"
+            "不好意思，這個群組目前還沒有參訪資料。"
+            "可以先稍等 Zona 協助確認，或請主辦人輸入「管理說明」開始設定。"
         )
     if event_data:
         custom_answer = custom_field_answer(text, event_data)
@@ -328,12 +390,18 @@ def answer_for_event(event: dict[str, Any], store=None) -> str | None:
     )
     if source_type == "user":
         if group_only:
-            return "群組專屬資料需要在參訪群組中設定或查詢。請把我加入群組並 @我。"
+            return (
+                "不好意思，群組專屬資料需要在參訪群組中設定或查詢。"
+                "請先把我加入群組，再使用 LINE 的提及功能 @我。"
+            )
         return static_answer(text)
     try:
         return group_answer(event, store or get_event_store())
     except EventStoreError:
-        return "參訪資料庫目前無法連線，請稍後再試；重要資訊請先以主辦人公告為準。"
+        return (
+            "不好意思，參訪資料庫目前暫時無法連線，請稍後再試。"
+            "如果問題持續發生，可以稍等 Zona 協助確認；重要資訊請以 Zona 的最新公告為準。"
+        )
 
 
 def valid_signature(body: bytes, signature: str, secret: str) -> bool:
